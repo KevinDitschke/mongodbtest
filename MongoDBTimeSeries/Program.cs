@@ -1,7 +1,7 @@
-﻿using BenchmarkDotNet.Attributes;
-using MongoDB.Bson;
+﻿using MongoDB.Bson;
 using MongoDB.Driver;
 using MongoDBTimeSeries.Models;
+using MongoDBTimeSeries.Services;
 
 namespace MongoDBTimeSeries;
 
@@ -9,15 +9,37 @@ class Program
 {
     static async Task Main(string[] args)
     {
+        var startTime = DateTime.UtcNow.AddHours(-3);
+        var endTime = DateTime.UtcNow.AddHours(3);
         var client = new MongoClient("mongodb://localhost:27017");
         var database = client.GetDatabase("datapointtest");
-        var collection = database.GetCollection<DataPoint>("datapoints");
-        var startTime = new DateTime(2024, 7, 14, 10, 0, 0);
-        var endTime = new DateTime(2024, 7, 14, 20, 0, 0);
-
-        // await FillDatabaseWithDatapoints(collection);
         
-        var results = await GetDataPoints(collection, startTime, endTime);
+        var timeSeriesCollection = await SetupTimeSeriesCollection(database);
+        var collection = await SetupDocumentCollection(database);
+        // await MongoDbTimeSeriesService.FillDatabaseWithDatapoints(timeSeriesCollection);
+        // await MongoDbCollectionService.FillDatabaseWithDatapoints(collection);
+
+        await PrintTimeSeriesDatapoints(timeSeriesCollection, startTime, endTime);
+        await PrintCollectionDatapoints(collection, startTime, endTime);
+    }
+
+    private static async Task PrintCollectionDatapoints(IMongoCollection<DataPoint> collection, DateTime startTime, DateTime endTime)
+    {
+        var points = await MongoDbCollectionService.GetDataPoints(collection, startTime, endTime);
+
+        foreach (var result in points)
+        {
+            var timestamp = result.Timestamp;
+            var value = result.AverageValue;
+
+            Console.WriteLine($"Timestamp: {timestamp}, Value: {value}");
+        }
+    }
+
+    private static async Task PrintTimeSeriesDatapoints(IMongoCollection<DataPoint> timeSeriesCollection, DateTime startTime,
+        DateTime endTime)
+    {
+        var results = await MongoDbTimeSeriesService.GetDataPoints(timeSeriesCollection, startTime, endTime);
 
         foreach (var result in results)
         {
@@ -28,45 +50,18 @@ class Program
         }
     }
 
-    [Benchmark]
-    private static async Task FillDatabaseWithDatapoints(IMongoCollection<DataPoint> collection)
+    private static async Task<IMongoCollection<DataPoint>> SetupDocumentCollection(IMongoDatabase database)
     {
-        var random = new Random();
-        var startTime = DateTime.UtcNow;
-        var dataPoints = new List<DataPoint>();
-        for (int i = 0; i < 800000; i++)
-        {
-            var datapoint = new DataPoint
-            {
-                Timestamp = startTime.AddSeconds(i),
-                Value = random.NextDouble(),
-                Metadata = new BsonDocument()
-            };
-            dataPoints.Add(datapoint);
-        }
-
-        await collection.InsertManyAsync(dataPoints);
+        var collection = database.GetCollection<DataPoint>("datapoints");
+        await MongoDbTimeSeriesService.EnsureIndexIsCreated(database.GetCollection<BsonDocument>("datapoints"), "datapointindex");
+        return collection;
     }
 
-    [Benchmark]
-    private static async Task<List<AggregatedDataPoint>> GetDataPoints(IMongoCollection<DataPoint> collection, DateTime startTime, DateTime endTime)
+    private static async Task<IMongoCollection<DataPoint>> SetupTimeSeriesCollection(IMongoDatabase database)
     {
-        
-        var filter = Builders<DataPoint>.Filter.And(
-            Builders<DataPoint>.Filter.Gte(dp => dp.Timestamp, startTime),
-            Builders<DataPoint>.Filter.Lte(dp => dp.Timestamp, endTime)
-        );
-
-        var entries = await collection
-            .Aggregate()
-            .Match(filter)
-            .BucketAuto(dp => dp.Timestamp, 100, g => new AggregatedDataPoint
-            {
-                Timestamp = g.Min(dp => dp.Timestamp),
-                AverageValue = g.Average(dp => dp.Value)
-            })
-            .ToListAsync();
-
-        return entries;
+        await MongoDbTimeSeriesService.EnsureCollectionIsCreated(database);
+        var timeSeriesCollection = database.GetCollection<DataPoint>("datapointsts");
+        await MongoDbTimeSeriesService.EnsureIndexIsCreated(database.GetCollection<BsonDocument>("datapointsts"), "datapointindex");
+        return timeSeriesCollection;
     }
 }

@@ -8,6 +8,7 @@ public class DataPoint
     [BsonElement("id")]
     public ObjectId Id { get; set; }
     [BsonElement("timestamp")]
+    [BsonDateTimeOptions(Kind = DateTimeKind.Utc)]
     public DateTime Timestamp { get; set; }
 
     [BsonElement("metadata")]
